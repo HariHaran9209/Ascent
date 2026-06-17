@@ -1,12 +1,28 @@
-const sgMail = require("@sendgrid/mail");
+const nodemailer = require("nodemailer");
 
-let configured = false;
+let transporter = null;
 
-/** Lazily applies the API key so a missing .env doesn't crash startup. */
+/** Lazily configures Nodemailer transporter so missing .env doesn't crash startup. */
 function ensureConfigured() {
-  if (!configured) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    configured = true;
+  if (!transporter) {
+    const service = process.env.EMAIL_SERVICE;
+    const config = {};
+    if (service) {
+      config.service = service;
+      config.auth = {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      };
+    } else {
+      config.host = process.env.EMAIL_HOST;
+      config.port = parseInt(process.env.EMAIL_PORT || "587");
+      config.secure = process.env.EMAIL_SECURE === "true"; // true for port 465, false for others
+      config.auth = {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      };
+    }
+    transporter = nodemailer.createTransport(config);
   }
 }
 
@@ -36,18 +52,16 @@ async function sendOtpEmail({ to, otp, purpose, username }) {
   const text = `${heading}\n\n${intro}\n\nYour code: ${otp}\n\nThis code expires in ${process.env.OTP_EXPIRY_MINUTES || 10} minutes.`;
 
   try {
-    await sgMail.send({
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
       to,
-      from: process.env.EMAIL_FROM,
       subject: purpose === "register" ? "Verify your email" : "Your login code",
       text,
       html,
     });
   } catch (err) {
-    // SendGrid puts the useful detail inside err.response.body, not err.message
-    const detail = err.response?.body?.errors?.[0]?.message || err.message;
-    console.error("SendGrid send failed:", detail);
-    throw new Error(`Failed to send OTP email: ${detail}`);
+    console.error("Nodemailer send failed:", err.message);
+    throw new Error(`Failed to send OTP email: ${err.message}`);
   }
 }
 
